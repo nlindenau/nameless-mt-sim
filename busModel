@@ -1,0 +1,151 @@
+
+model BusModel
+
+/* Simple model to simulate bus route */
+
+
+global {
+	//Shapefile of the bust stops
+	file stops_shapefile <- file("D:/GIS/V/GIS_project/arcgis_example/route64/GAMA_test/ALL_stops_test.shp");
+	//Shapefile of the roads
+	file road_shapefile <- file("D:/GIS/V/GIS_project/arcgis_example/route64/GAMA_test/road.shp");
+	//Shape of the environment
+	file bounds <- file("D:/GIS/V/GIS_project/arcgis_example/route64/GAMA_test/bounds.shp");
+	geometry shape <- envelope(bounds);
+	
+	//initial number of buses
+	int nb_buses_init <- 1;
+	
+	//Step value
+	float step <- 1 #m;
+	
+	//Graph of the road network
+	graph road_network;
+	
+	//Map containing all the weights for the road network graph
+	map<road,float> road_weights;
+	
+	//Time things testing !DOES NOT WORK!
+	//date starting_date <- date("2019-09-01-05-55-00");
+	//int start <- 6;
+    //int end <- 7;
+		
+	//Speed things 	
+	float min_speed <- 20.0 #km / #h;
+    float max_speed <- 100.0 #km / #h;
+    float speed max:100.0 min:0 #km / #h; 
+	
+	init {
+		//Initiliasize stops from shapefile 
+		create stops from:stops_shapefile with:[type::read("stop_seque")];
+		//Initiliasize road from shapefile
+		create road from: road_shapefile;
+		//Creation of the people agents
+		create bus number: nb_buses_init{
+			//random speed
+			speed <- rnd(min_speed, max_speed);
+			//People agents are located in first stop
+			location <- any_point_in(one_of(stops where (each.type="1")));
+		}
+		
+      	//Weights of the road
+      	road_weights <- road as_map (each::each.shape.perimeter);
+      	road_network <- as_edge_graph(road);
+	}
+	
+	//Reflex to update the speed of the roads according to the weights ?HOW DOES THIS WORK?
+ 	reflex update_road_speed  {
+		road_weights <- road as_map (each::each.shape.perimeter / each.speed_coeff);
+		road_network <- road_network with_weights road_weights;
+	}
+}
+
+//Species to represent the buses using the skill 'moving' 
+species bus skills: [moving]{
+	//Target point of the agent
+	point target;
+	//color of bus agent
+	rgb color <- #yellow; //rnd_color(255); <- random color
+	
+	//Probability of leaving ?NOT NEEDED?
+	//float leaving_proba <- 1.0; 
+	
+	//Speed of the agent ?DECLARED ALREADY IN GLOBAL?
+	//float speed <- 80 #km/#h;
+	
+	//BEHAVIOUR OF BUS AGENT WITH MOVING SKILLS:
+	
+	//Reflex to leave the stop to another stop
+	reflex leave when: (target = nil){
+		target <- any_location_in(one_of(stops where (each.type="25"))); //target as the last stop on the route (with this dataset, 25 stops)
+	}
+	//Reflex to move to the target stop moving on the road network 
+	reflex move when: target != nil {
+		do goto target: target on: road_network recompute_path: false move_weights: road_weights;
+		if (location = target) {
+			//target <- nil; // <--This creates loop reversing the route
+			
+			location <- any_point_in(one_of(stops where (each.type="1"))); // <--This creates loop starting the route always form 1st stop
+		}	
+	}
+	
+	//visualisation
+	aspect default {
+		draw circle(100) color: color border: #black;
+	}
+	
+	//show bus icon if you have image file
+	//image_file my_icon <- image_file("D:/GIS/V/GIS_project/arcgis_example/route64/GAMA_test/icon/bus.png");
+	//aspect icon {
+        //draw my_icon size: 400;
+        
+    //}
+}
+
+//Species to represent the stops 
+species stops {
+	string type;
+	
+	//visualisation
+	aspect default {
+		draw circle(50) color: #white border: #black;
+	}
+}
+//Species to represent the roads !NOT SURE HOW THIS WORKS!
+species road {
+	//Capacity of the road considering its perimeter
+	float capacity <- 1 + shape.perimeter/30;
+	//Number of people on the road
+	int nb_buses <- 0 update: length(bus at_distance 1);
+	//Speed coefficient computed using the number of people on the road and the capicity of the road
+	float speed_coeff <- 1.0 update:  exp(-nb_buses/capacity) min: 0.1;
+	
+	//visualisation
+	aspect default {
+		draw (shape + 3 * speed_coeff) color: #blue;
+		
+	}
+}
+
+//Create experiment to run the model
+experiment traffic type: gui {
+	//let users update nr of agents and min and max speed
+	parameter "Number of buses: " var: nb_buses_init min: 1 max: 10 category: "Buses" ;
+	parameter "Min speed: " var: min_speed min: 0.00 max: 100.00 category: "Buses" ;
+	parameter "Max speed: " var: max_speed min: 0.00 max: 100.00 category: "Buses" ;
+	//let user change shapefiles
+	parameter "Shapefile for the stops:" var: stops_shapefile category: "GIS" ;
+    parameter "Shapefile for the roads:" var: road_shapefile category: "GIS" ;
+    parameter "Shapefile for the bounds:" var: bounds category: "GIS" ;
+		
+	float minimum_cycle_duration <- 0.01;
+	output {
+		display carte type: opengl{
+			species stops refresh: false;
+			species road aspect: default;
+			species bus aspect: default ;
+			//species bus aspect: icon ; //visualise as icon
+		}
+	}
+}
+
