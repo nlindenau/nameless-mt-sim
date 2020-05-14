@@ -19,9 +19,13 @@ global {
     // or different scenarios - two different lists, one for normal one for rush hour.  
     list people_waiting <- [0,1,2,3,4,5,4,6,7,8,9,8,7,5,0,0,0,2,3,4,5,6,3,2,1,1,1];
     
-    //TO DO
-    // make this list a real time table. 
-    list new_bus <- [0, 15, 30, 45];  
+ 	//read in a basic timetable with bus trip start time. 
+ 	//we have used a CSV we wriote quickly for testing
+    file mock_timetable <- file('/Users/gabrielcramer/Desktop/timetable.csv');
+    //turn the timetable file into a matrix so we can check it works
+    matrix timetable <- matrix(mock_timetable);
+    
+    // list new_bus <- [0, 15, 30, 45];  // original test list for scheduling the bus creation
    
    
     //Shapefile of the bust stops
@@ -58,23 +62,27 @@ global {
     location <- any_location_in(one_of(bstops where (each.stops="1"))); // starts the bus at the first stop. 
     // location <- any_point_in(at(bstops, 0)) // alternative way of defining start location. 
     }
-
-    }
     
-    reflex reproduce when: ((new_bus contains current_date.minute) and current_date.second = 0) {
+    // write a loop here to check if the matrix is working
+    
+    }
+
+    // reflex in the global environment that creates the buses. the point is that we can attach conditions for the creation of buses at specific times
+    // we access the hour and minute columns of the timetable matrix and when they correspond to current time and minutes in the simulation, it creates a but at the start of the route
+    // the second specification is there so it doesn't create a bus at every second of the current minute. 
+    reflex reproduce when: column_at(timetable, 0) contains current_date.hour and (column_at(timetable, 1) contains current_date.minute and current_date.second = 0) {
     	create bus number: 1 {
-		speed <- agent_speed;
+		speed <- agent_speed; // characterised the agents base speed
     	location <- any_location_in(one_of(bstops where (each.stops="1"))); // starts the bus at the first stop. 
     	starting_date <- current_date;
-    	start_time <- true;
+    	start_time <- true;// sets it to true so it it starts moving
     	}	
     	}
     	
     	
     
 }
-// TO DO. 
-// work out a way to make buses start at different times - schedule them. 
+ 
 
 // species = bus, which has the skillset advanced driving which gives it some inherent skills. Works with moving, but advanced driving gives us more options. 
 species bus skills:[advanced_driving]{     
@@ -159,9 +167,6 @@ species bus skills:[advanced_driving]{
 
 
 
-
-
-
 // new species - road/route
 species road {
 	//visualisation parameteres
@@ -173,6 +178,20 @@ species road {
 // new species - bus stops
 species bstops {
 	string stops; // when it reads the attribute as a string
+	float probability_grow; // probability that at each step the passenger number will grow
+	int grow_by <- rnd(0, 20) max: 20; //generate random number between 0 and x
+	int waiting <- 0 update: (waiting + grow_by); //base number of people waiting at each stop. 
+	
+	//reflex grow_passengers {
+		//loop i from: 1 to: 27{
+			//people_waiting[i] <- people_waiting[i] update: grow_by;
+			//write(people_waiting);
+		//}
+	//reflex waiting {
+		//write('TEST: ' +  + waiting);
+		
+		//}
+
 	
 	//visualisation parameters
     aspect default {
