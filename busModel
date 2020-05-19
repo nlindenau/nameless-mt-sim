@@ -1,4 +1,11 @@
 
+/***
+* Name: bus_model_timetable_ed
+* Author: gabrielcramer
+* Description: 
+* Tags: Tag1, Tag2, TagN
+***/
+
 model traffic
 global {
     int nb_people <- 1; // number of buses (agents) //
@@ -17,11 +24,11 @@ global {
     // TO DO
     // populate this list randomly, and faster at rush hours according to the delay coefficient.
     // or different scenarios - two different lists, one for normal one for rush hour.  
-    list people_waiting <- [0,1,2,3,4,5,4,6,7,8,9,8,7,5,0,0,0,2,3,4,5,6,3,2,1,1,1];
+    list people_waiting <- [0,0,2,3,4,5,4,6,7,8,9,8,7,5,0,0,0,2,3,4,5,6,3,2,1,1,1];
     
  	//read in a basic timetable with bus trip start time. 
  	//we have used a CSV we wriote quickly for testing
-    file mock_timetable <- file('/Users/gabrielcramer/Desktop/timetable.csv');
+    file mock_timetable <- file('/Users/gabrielcramer/Desktop/GAMA_test/timetable.csv');
     //turn the timetable file into a matrix so we can check it works
     matrix timetable <- matrix(mock_timetable);
     
@@ -29,12 +36,15 @@ global {
    
    
     //Shapefile of the bust stops
-	file stops_shapefile <- file("/Users/gabrielcramer/Downloads/GAMA_test/ALL_stops_test.shp");
+	file stops_shapefile <- file("/Users/gabrielcramer/Desktop/GAMA_test/ALL_stops_test.shp");
 	//Shapefile of the roads
-	file roads_shapefile <- file("/Users/gabrielcramer/Downloads/GAMA/road.shp");
+	file roads_shapefile <- file("/Users/gabrielcramer/Desktop/GAMA_test/road.shp");
 	//Shape of the environment
-	file bounds <- file("/Users/gabrielcramer/Downloads/GAMA/bounds.shp");
-    geometry shape <- envelope(bounds); // bounds - could use road shapefile too. 
+	file bounds <- file("/Users/gabrielcramer/Desktop/GAMA_test/bounds.shp");
+	//regions
+	file zones_shape <- file("/Users/gabrielcramer/Desktop/GAMA_test/hsl_ABC.shp");
+	
+	geometry shape <- envelope(zones_shape); // bounds - could use road shapefile too. 
     
     graph road_network; // creates a graph from the road netwok as a variable, declares the type. 
     
@@ -52,17 +62,22 @@ global {
     
     // initialisation commands the sim to create the species.     
     init {
+    	
     create road from: roads_shapefile;
     road_network <- as_edge_graph(road); // the variable road_network is created as a graph.
-    create bstops from: stops_shapefile with:[stops::string(read("stop_seque"))]; // reads the attribute field (sequence number)
+    create bstops from: stops_shapefile with:[stops::string(read("stop_seque")), zone::string(read("zone"))]; // reads the attribute field (sequence number)
     
     create bus number: 0 {
     speed <- agent_speed;
     //speed <- rnd(min_speed, max_speed);
     location <- any_location_in(one_of(bstops where (each.stops="1"))); // starts the bus at the first stop. 
-    // location <- any_point_in(at(bstops, 0)) // alternative way of defining start location. 
+    // location <- any_point_in(at(bstops, 0)) // alternative way of defining start location.
+    //zone_A <- one_of(zones where (each.zone = "A"));
+    //container<zones, string> zone_B <- one_of(zones where (each.zone = "B"));
+    //container<zones, string> zone_C <- one_of(zones where (each.zone = "C"));
     }
-    
+    //create zones
+    create zones from: zones_shape with: [zone::read("Zone")]; 
     // write a loop here to check if the matrix is working
     
     }
@@ -83,7 +98,6 @@ global {
     
 }
  
-
 // species = bus, which has the skillset advanced driving which gives it some inherent skills. Works with moving, but advanced driving gives us more options. 
 species bus skills:[advanced_driving]{     
     point target; // the attribute containing information about where the bus should go next. 
@@ -92,6 +106,10 @@ species bus skills:[advanced_driving]{
     int trip_count;  // counts the number of trips the bus makes.
     int next_stop <- 0; // variable that gets updated so the bus can progress to each sequential stop.
     point final_target <-  any_point_in(at(bstops, 24));
+    //zones zone_A;
+    //zones zone_B;
+    //zones zone_C;
+    
     
     //int pp_count;
     
@@ -137,7 +155,7 @@ species bus skills:[advanced_driving]{
 		// if clause to change the speed of the bus during the peak hours, taking into account the delay coeeficient. 
 		if (current_date.hour = traffic_am or current_date.hour = traffic_pm){
 			speed <- agent_speed*(1-rush_hour_delay); // so that closer to 1 give a bigger delay
-		}else{ // if not the rush hours then the speed is the normal baseline agent speed
+		}else { // if not the rush hours then the speed is the normal baseline agent speed
 			speed <- agent_speed;
 		}
 		write("Speed km/h:"+ speed*3.6); // writes speed of trip to console.
@@ -147,28 +165,38 @@ species bus skills:[advanced_driving]{
     //reflex to move on route until end is true    
     reflex move when: target != nil and end_time{ 
     do goto target:target on: road_network; //this line says go to target (next stop) using the road network, rather than a straight line. 
-    
+   
+	if(location distance_to target<50 ){
+    speed <- 10 #km /#h;
+    //step <- 0.001;
+     write("Speed km/h:"+ speed*3.6);
+    }else{
+      speed <- agent_speed;
+    }
     if (location = target) { // if the location is the target, it is the arrival 
         target <- nil;
         write("Arrival at stop " + (next_stop+1) + ": " + current_date); // writes departure time to console
     } 
+    
     }
+    
     
     // defines visulaisation parameters -  we can come back and make this pretty later. for example we could change the colour during rush hour. 
     aspect default{ 
-    draw circle(100) color:#red border: #black;
+    draw circle(100) color: (speed > 25 #km / #h) ? #green : #orange border: #black;
     }
     
 
     	
 // TO DO
-// kill bus at end.
+// kill bus at end?
 }
 
 
 
 // new species - road/route
-species road {
+species road skills: [skill_road_node]{
+	
 	//visualisation parameteres
     aspect default {
     draw shape color: #black; // draws the shape as the shape
@@ -180,7 +208,30 @@ species bstops {
 	string stops; // when it reads the attribute as a string
 	float probability_grow; // probability that at each step the passenger number will grow
 	int grow_by <- rnd(0, 20) max: 20; //generate random number between 0 and x
-	int waiting <- 0 update: (waiting + grow_by); //base number of people waiting at each stop. 
+	int waiting <- 0 update: (waiting + grow_by); //base number of people waiting at each stop
+	string zone; 
+	
+	int counter <- 0;
+	date stop_date;
+	
+	
+	reflex ask_to_stop {
+		ask bus {
+			if (people_waiting[next_stop] > 0) and (location = target) {
+				myself.counter <- myself.counter + (people_waiting[next_stop] * 10);
+				if (location = next_stop){
+					myself.stop_date <- current_date;
+				}
+				loop while: (current_date < (myself.stop_date + myself.counter)) {
+					agent_speed <- 0.0;
+				}
+				people_waiting[next_stop] <- 0.0;
+				}
+		}
+	
+	}
+	
+
 	
 	//reflex grow_passengers {
 		//loop i from: 1 to: 27{
@@ -199,6 +250,22 @@ species bstops {
     }
 }
 
+//zones species
+species zones{
+  string zone;
+  
+  aspect default {
+    if (zone="A"){
+      draw shape  color: #orange border: #black ;  
+    }
+    if (zone="B"){
+      draw shape  color: #yellow border: #black;  
+    }
+      if (zone="C"){
+        draw shape  color: #green border: #black; 
+      }
+    }
+}
 
 // experiment setup
 experiment main_experiment type:gui{ // type visual for the animation
@@ -213,7 +280,7 @@ experiment main_experiment type:gui{ // type visual for the animation
 	// parameters to change shapefile input
 	parameter "Shapefile for the stops:" var: stops_shapefile category: "GIS" ;
     parameter "Shapefile for the roads:" var: roads_shapefile category: "GIS" ;
-    parameter "Shapefile for the bounds:" var: bounds category: "GIS" ;
+    //parameter "Shapefile for the bounds:" var: bounds category: "GIS" ;
 	
 	// sets the speed slider to the initial point - real time
     float minimum_cycle_duration <- 0.1;
@@ -227,9 +294,11 @@ experiment main_experiment type:gui{ // type visual for the animation
     
     // display in the visulation window
     display map {
+        species zones;
         species road ;
         species bstops ;
-        species bus ; 
+        species bus ;
+         
     }
     
     // TO DO
