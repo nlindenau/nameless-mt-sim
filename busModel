@@ -16,6 +16,9 @@ global {
     float agent_speed <- 30.0 #km/#h;  // agent speed - base level
     float min_speed <- 20.0 #km / #h; // not being used at the moment - for if we use random speed
     float max_speed <- 40.0 #km / #h; // not being used at the moment  - for if we use random speed
+    int seconds <- 60;
+    int grow_upper_limit <- 3;
+    
     
     float step <- 1 #seconds; // time step for the model. 
     
@@ -25,7 +28,6 @@ global {
     // populate this list randomly, and faster at rush hours according to the delay coefficient.
     // or different scenarios - two different lists, one for normal one for rush hour.  
     list people_waiting <- [0,0,2,3,4,5,4,6,7,8,9,8,7,5,0,0,0,2,3,4,5,6,3,2,1,1,1];
-    
  	//read in a basic timetable with bus trip start time. 
  	//we have used a CSV we wriote quickly for testing
     file mock_timetable <- file('/Users/gabrielcramer/Desktop/GAMA_test/timetable.csv');
@@ -48,6 +50,8 @@ global {
     
     graph road_network; // creates a graph from the road netwok as a variable, declares the type. 
     
+    map<road,float> road_weights; // road weights
+    
     
     date starting_date <- date([2020,5,12,6,0,0]); // start sim
     date end_date <- date([2020,5,12,18,0,0]); // end sim
@@ -65,6 +69,7 @@ global {
     	
     create road from: roads_shapefile;
     road_network <- as_edge_graph(road); // the variable road_network is created as a graph.
+    
     create bstops from: stops_shapefile with:[stops::string(read("stop_seque")), zone::string(read("zone"))]; // reads the attribute field (sequence number)
     
     create bus number: 0 {
@@ -76,11 +81,23 @@ global {
     //container<zones, string> zone_B <- one_of(zones where (each.zone = "B"));
     //container<zones, string> zone_C <- one_of(zones where (each.zone = "C"));
     }
+   
     //create zones
     create zones from: zones_shape with: [zone::read("Zone")]; 
-    // write a loop here to check if the matrix is working
+    
+    create car number: 1 {
+    	location <- one_of(bstops).location;
+    	vehicle_length <- 3.0;
+    	speed_coeff <- 1.2 - (rnd(400)/1000);
+    	final_target <- one_of(bstops).location;
+    }
     
     }
+    
+    reflex update_road_speed  {
+    road_weights <- road as_map (each::each.shape.perimeter / each.speed_coeff);
+    road_network <- road_network with_weights road_weights;
+  	}
 
     // reflex in the global environment that creates the buses. the point is that we can attach conditions for the creation of buses at specific times
     // we access the hour and minute columns of the timetable matrix and when they correspond to current time and minutes in the simulation, it creates a but at the start of the route
@@ -94,21 +111,35 @@ global {
     	}	
     	}
     	
-    	
+   	//reflex listing when: every(60 #s){
+		//loop i from: 1 to: length(people_waiting)-1 {
+		//	people_waiting[i]<- waiting;
+		//}
+		//write("TEST: " + people_waiting);
+	//} 	
     
 }
  
 // species = bus, which has the skillset advanced driving which gives it some inherent skills. Works with moving, but advanced driving gives us more options. 
 species bus skills:[advanced_driving]{     
+    rgb color <- #green;
     point target; // the attribute containing information about where the bus should go next. 
     bool start_time <- false; // this is false because in the reflex we set it to true - prevents automatic start?
     bool end_time <- true; // while it is true the bus keeps trying to reach the end. 
     int trip_count;  // counts the number of trips the bus makes.
     int next_stop <- 0; // variable that gets updated so the bus can progress to each sequential stop.
     point final_target <-  any_point_in(at(bstops, 24));
+    float speed;
+    list people_waiting;
     //zones zone_A;
     //zones zone_B;
     //zones zone_C;
+    
+   // reflex create_list {
+    	//ask bstops {
+    		
+    	//	myself.people_waiting <- 
+    
     
     
     //int pp_count;
@@ -135,20 +166,13 @@ species bus skills:[advanced_driving]{
    //start moving when start time is true 
    reflex leave when: (target = nil) and start_time and (location != final_target) {
 		next_stop <- next_stop + 1; // grows the next stop by one. 
-		loop while: ((people_waiting[next_stop] = 0) and (next_stop < 26)) { // loop checks if there are people waiting. if there are not, and there is a next stop, then next stop updates untiol it finds a stop with people waiting. 
-			next_stop <- next_stop +1; //next stop updates +1 to the next instance in the list
-		} 
-		// if the stop is last stop then return to the beginning stop
-		//if (next_stop > 24){ //should not be hardcoded. we should define as a property of a bus route. 
-			//next_stop <- 24;
-			//location <- any_point_in(at(bstops, 0));
-			//trip_count <- trip_count +1;
-		//}
-		//HERE!!!!starting_date <- from the timetable a specific row????
-		target <- any_location_in(at(bstops, next_stop)); //at takes item from given location in a list to update the target as the next stop. 
+		ask bstops {
+			if (people_waiting[myself.next_stop] = 0) and (myself.next_stop < length(bstops)-1) { // loop checks if there are people waiting. if there are not, and there is a next stop, then next stop updates untiol it finds a stop with people waiting. 
+			myself.next_stop <- myself.next_stop +1; //next stop updates +1 to the next instance in the list
+			}
 		
-		// TO DO		
-		// needs something so that we are printing/storing useful information....journey time for example?
+		myself.target <- any_location_in(at(bstops, myself.next_stop)); //at takes item from given location in a list to update the target as the next stop
+		}
 		
 		write("Departure from stop " + next_stop + ": " + current_date); // writes the start time to the console
 		
@@ -164,15 +188,14 @@ species bus skills:[advanced_driving]{
 	    
     //reflex to move on route until end is true    
     reflex move when: target != nil and end_time{ 
-    do goto target:target on: road_network; //this line says go to target (next stop) using the road network, rather than a straight line. 
-   
-	if(location distance_to target<50 ){
-    speed <- 10 #km /#h;
-    //step <- 0.001;
-     write("Speed km/h:"+ speed*3.6);
-    }else{
-      speed <- agent_speed;
-    }
+    
+    //this line says go to target (next stop) using the road network, rather than a straight line.
+    do goto target:target on: road_network move_weights: road_weights; 
+    
+    //ask bstops {
+    	
+    //}
+	
     if (location = target) { // if the location is the target, it is the arrival 
         target <- nil;
         write("Arrival at stop " + (next_stop+1) + ": " + current_date); // writes departure time to console
@@ -180,11 +203,24 @@ species bus skills:[advanced_driving]{
     
     }
     
+    //reflex slow {
+    //	ask bstops {
+    //		if (myself.location distance_to myself.target < 10){
+    //			myself.speed <- 10 #km / #h;
+    //			myself.color <- #orange;
+    //			}else{
+    //			myself.speed <-agent_speed;
+    //			myself.color <- #green;
+    //			}
+    //	}
+    //}
     
     // defines visulaisation parameters -  we can come back and make this pretty later. for example we could change the colour during rush hour. 
     aspect default{ 
-    draw circle(100) color: (speed > 25 #km / #h) ? #green : #orange border: #black;
+    //draw circle(100) color: (speed > 25 #km / #h) ? #green : #orange border: #black;
+    draw circle(100) color: color border: #black;
     }
+    
     
 
     	
@@ -196,40 +232,80 @@ species bus skills:[advanced_driving]{
 
 // new species - road/route
 species road skills: [skill_road_node]{
-	
-	//visualisation parameteres
-    aspect default {
+  
+  //Capacity of the road considering its perimeter
+  float capacity <- 1 + shape.perimeter/30;
+  //Number of people on the road
+  int nb_people <- 0 update: length(car at_distance 1);
+  //Speed coefficient computed using the number of people on the road and the capicity of the road
+  float speed_coeff <- 1.0 update:  exp(-nb_people/capacity) min: 0.1;
+  
+  //visualisation parameteres
+   
+   aspect default {
     draw shape color: #black; // draws the shape as the shape
     }
 }
 
 // new species - bus stops
 species bstops {
+	rgb color <- #blue;
 	string stops; // when it reads the attribute as a string
 	float probability_grow; // probability that at each step the passenger number will grow
-	int grow_by <- rnd(0, 20) max: 20; //generate random number between 0 and x
-	int waiting <- 0 update: (waiting + grow_by); //base number of people waiting at each stop
-	string zone; 
+	int waiting <- 0; //base number of people waiting at each stop
+	int grow_by <- rnd(0, grow_upper_limit); //generate random number between 0 and x
 	
+	string zone;
+	//list people_waiting <- [0,0,2,3,4,5,4,6,7,8,9,8,7,5,0,0,0,2,3,4,5,6,3,2,1,1,1]; 
 	int counter <- 0;
 	date stop_date;
 	
-	
-	reflex ask_to_stop {
-		ask bus {
-			if (people_waiting[next_stop] > 0) and (location = target) {
-				myself.counter <- myself.counter + (people_waiting[next_stop] * 10);
-				if (location = next_stop){
-					myself.stop_date <- current_date;
-				}
-				loop while: (current_date < (myself.stop_date + myself.counter)) {
-					agent_speed <- 0.0;
-				}
-				people_waiting[next_stop] <- 0.0;
-				}
-		}
-	
+	reflex grow_passengers when: every(seconds #s) {
+		waiting <- (waiting + grow_by);
 	}
+	
+	//reflex listing when: every(60 #s){
+	//	loop i from: 1 to: length(people_waiting)-1 {
+	//		people_waiting[i]<- waiting;
+	//	}
+	//	write("TEST: " + people_waiting[1]);
+	//}
+	
+	reflex passenger_pick_up {
+		ask bus{
+			if(location distance_to myself<10){
+				myself.waiting <- 0;
+				speed <- 10 #km / #h;
+				write("busstop speed: " + (speed*3.6) + "kph");
+			}else{
+				speed <- agent_speed;
+			} 
+		}
+	}
+	
+	reflex change_colour{
+		if (waiting > 10) {
+			color <- #red;
+		}else {
+			color <- #blue;
+		}
+	}
+	
+	//reflex ask_to_stop {
+		//ask bus {
+			//if (people_waiting[next_stop] > 0) and (location = target) {
+				//myself.counter <- myself.counter + (people_waiting[next_stop] * 10);
+			//	if (location = next_stop){
+			//		myself.stop_date <- current_date;
+			//	}
+			//	loop while: (current_date < (myself.stop_date + myself.counter)) {
+			//		agent_speed <- 0.0;
+			//	}
+			//	people_waiting[next_stop] <- 0.0;
+			//	}
+		//}
+	
+	
 	
 
 	
@@ -238,15 +314,12 @@ species bstops {
 			//people_waiting[i] <- people_waiting[i] update: grow_by;
 			//write(people_waiting);
 		//}
-	//reflex waiting {
-		//write('TEST: ' +  + waiting);
-		
-		//}
+
 
 	
 	//visualisation parameters
     aspect default {
-    draw circle(50) color: #grey border: #black;
+    draw circle(50) color: color border: #black;
     }
 }
 
@@ -256,15 +329,40 @@ species zones{
   
   aspect default {
     if (zone="A"){
-      draw shape  color: #orange border: #black ;  
+      draw shape  color: #white border: #black ;  
     }
     if (zone="B"){
-      draw shape  color: #yellow border: #black;  
+      draw shape  color: #white border: #black;  
     }
       if (zone="C"){
-        draw shape  color: #green border: #black; 
+        draw shape  color: #white border: #black; 
       }
     }
+}
+
+species car skills: [advanced_driving]{
+	rgb color <- #yellow;
+	int start;
+	int end;
+	point target;
+	float speed <- rnd(1,100) #km / #h;
+	
+	reflex time_to_go when: final_target = nil {
+		current_path <- compute_path(graph: road_network, target: one_of(bstops));
+	}
+	
+	reflex move when: final_target != nil {
+		do goto(target: one_of(bstops), on: road_network, return_path: true);
+		
+		if (location = target) { // if the location is the target, it is the arrival 
+        target <- nil;
+        
+        }
+	}
+	
+	aspect base {
+		draw circle(10) color: color border: #black;
+	}
 }
 
 // experiment setup
@@ -281,6 +379,9 @@ experiment main_experiment type:gui{ // type visual for the animation
 	parameter "Shapefile for the stops:" var: stops_shapefile category: "GIS" ;
     parameter "Shapefile for the roads:" var: roads_shapefile category: "GIS" ;
     //parameter "Shapefile for the bounds:" var: bounds category: "GIS" ;
+    
+    parameter "Max. passenger increase per step" var: grow_upper_limit category: "Bus Stop";
+    parameter "Passenger accumulation time step (seconds)" var: seconds category: "Bus Stop";
 	
 	// sets the speed slider to the initial point - real time
     float minimum_cycle_duration <- 0.1;
@@ -291,13 +392,17 @@ experiment main_experiment type:gui{ // type visual for the animation
     monitor "Current time" value: current_date;
     //monitor "Current hour" value: current_date.hour;
     //monitor "Current minute" value: current_date.minute;
+    monitor "Speed" value: agent_speed refresh: every(5 #s);
+    
+    inspect "Passengers Waiting" value: bstops attributes: ["waiting"] type: table;
     
     // display in the visulation window
     display map {
         species zones;
-        species road ;
-        species bstops ;
-        species bus ;
+        species road;
+        species bstops;
+        species bus;
+        species car;
          
     }
     
